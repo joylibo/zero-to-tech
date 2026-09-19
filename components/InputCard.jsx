@@ -19,6 +19,7 @@ export default function InputCard({ onResult }) {
       const res = await fetch(`${API}/api/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ text }),
       });
 
