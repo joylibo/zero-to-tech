@@ -38,8 +38,7 @@ npm run dev                   # → http://localhost:3000
 
 ## 部署到服务器
 
-前提：服务器上已装好 Python 3.10+、Node.js 18+ 和 Nginx，
-且 Nginx 的站点根目录已指向本项目的 `out/`、监听 80 端口。
+前提：服务器上已装好 Python 3.10+、Node.js 18+ 和 Nginx。
 
 **1. 拉取代码**
 
@@ -52,7 +51,7 @@ git pull
 
 ```bash
 npm install
-cp .env.example .env.production   # 按下面「配置说明」填好
+cp .env.example .env.production   # 按下面「配置说明」填好（线上留空）
 npm run build                     # 产物进 out/，由 Nginx 提供服务
 ```
 
@@ -66,31 +65,97 @@ pip install -r requirements.txt
 cp .env.example .env              # 按下面「配置说明」填好
 ```
 
-**4. 后端：在后台跑起来**
+**4. 后端：委托给 systemd**（首次部署才需要）
 
-```bash
-nohup .venv/bin/fastapi run > backend.log 2>&1 &
+新建 `/etc/systemd/system/zero-backend.service`：
+
+```ini
+[Unit]
+Description=zero-to-tech backend
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/zero-to-tech/backend
+ExecStart=/home/ubuntu/zero-to-tech/backend/.venv/bin/fastapi run --host 127.0.0.1
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-`fastapi run` 是生产模式，监听 `0.0.0.0:8000`；`nohup ... &` 让它在
-SSH 断开后继续运行，日志写进 `backend.log`。
-
-查看日志、停止服务：
-
 ```bash
-tail -f backend.log           # 看日志
-ps aux | grep fastapi         # 找到进程号
-kill 进程号                    # 停掉
+sudo systemctl daemon-reload
+sudo systemctl start zero-backend     # 启动
+sudo systemctl enable zero-backend    # 开机自启
+sudo systemctl status zero-backend    # 看到 active (running) 就对了
 ```
 
-**5. 放行 8000 端口**
+**5. Nginx：静态文件 ＋ `/api/` 反向代理**（首次部署才需要）
 
-去云平台控制台的安全组 / 防火墙，放行 8000 端口（80 端口应该已经放行）。
+编辑 `/etc/nginx/sites-enabled/default`：
 
-**6. 验证**
+```nginx
+server {
+    listen 80 default_server;
+    server_name _;
 
-浏览器访问 `http://服务器IP`，打开文字实验室做一次分析，再看历史记录。
-换一个浏览器（或无痕窗口）再试一次，两边的历史记录应该是互相看不到的。
+    root /home/ubuntu/zero-to-tech/out;
+    index index.html;
+
+    location / {
+        try_files $uri $uri.html $uri/ =404;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;     # 末尾不要加斜杠
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**6. 安全组 / 防火墙**
+
+只放行 **22（SSH）** 和 **80（HTTP）**。**8000 不要放行**——后端只监听 `127.0.0.1`，由 Nginx 转发进去。
+
+**7. 验证**
+
+```bash
+curl localhost/api/profile        # 服务器本机，注意不带端口
+```
+
+浏览器访问 `http://服务器IP`，做一次分析、看一眼历史记录。换个无痕窗口再试，两边的历史应该互相看不到。
+
+## 日常发布
+
+```bash
+cd ~/zero-to-tech
+git pull
+
+npm run build                          # 前端改了才需要
+sudo systemctl restart zero-backend    # 后端改了才需要
+```
+
+## 常用运维命令
+
+```bash
+sudo systemctl status zero-backend     # 看状态
+sudo systemctl restart zero-backend    # 重启
+sudo systemctl stop zero-backend       # 停掉
+journalctl -u zero-backend -f          # 实时看日志（Ctrl+C 退出）
+journalctl -u zero-backend -n 50       # 看最后 50 行
+
+sudo nginx -t                          # 改完 Nginx 配置先验语法
+sudo systemctl reload nginx            # 再让它重读
+```
+
 
 ## 配置说明
 
@@ -100,7 +165,8 @@ kill 进程号                    # 停掉
 
 | 键 | 说明 | 本地 | 线上 |
 | --- | --- | --- | --- |
-| `NEXT_PUBLIC_API_BASE_URL` | 后端接口地址 | `http://localhost:8000` | `http://服务器IP:8000` |
+| `NEXT_PUBLIC_API_BASE_URL` | 后端接口地址 | `http://localhost:8000` | **留空**——前后端同源，代码里走相对路径 |
+
 
 **后端**：`backend/.env`
 
