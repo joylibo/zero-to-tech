@@ -1,0 +1,10 @@
+# 默认允许抓取，但 /api/ 一律禁止
+User-agent: *
+Disallow: /api/
+
+# 仅谢绝"训练大模型"用途的爬虫（搜索/代用户访问类保留）
+User-agent: GPTBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
